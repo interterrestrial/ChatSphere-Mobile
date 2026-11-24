@@ -4,7 +4,7 @@ import { useEffect, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight } from 'lucide-react';
 import { AccountFrame } from './AccountFrame';
-import { boot, chooseUsername, clearSession } from '../store/authSlice';
+import { chooseUsername, signOut } from '../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../store/Providers';
 
 export function ChooseUsername() {
@@ -43,10 +43,7 @@ export function ChooseUsername() {
         </button>
       </form>
       <p className="account-switch">
-        <button type="button" className="text-button" onClick={() => {
-          clearSession();
-          dispatch(boot(null));
-        }}>Back to sign in</button>
+        <button type="button" className="text-button" disabled={pending} onClick={() => void dispatch(signOut())}>Back to sign in</button>
       </p>
     </AccountFrame>
   );

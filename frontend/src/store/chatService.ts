@@ -26,12 +26,18 @@ export interface Conversation {
   unreadCount?: number;
 }
 
+export type MessageCursor = { before: string } | { after: string };
+export interface MessagePage {
+  messages: Message[];
+  nextCursor: string | null;
+}
+
 export interface ChatService {
   conversations(): Promise<Conversation[]>;
-  messages(conversationId: string): Promise<Message[]>;
+  messages(conversationId: string, cursor?: MessageCursor): Promise<MessagePage>;
   search(query: string, signal: AbortSignal): Promise<Participant[]>;
   start(participantId: string): Promise<Conversation>;
-  send(conversationId: string, content: string): Promise<Message>;
+  send(conversationId: string, content: string, clientMessageId: string): Promise<Message>;
   suggest(message: Message): Promise<string[]>;
   summarize(conversationId: string): Promise<string>;
 }
@@ -40,8 +46,8 @@ export const liveChat: ChatService = {
   async conversations() {
     return (await api.get<Conversation[]>('/chat/conversations')).data;
   },
-  async messages(conversationId) {
-    return (await api.get<Message[]>(`/chat/messages/${encodeURIComponent(conversationId)}`)).data;
+  async messages(conversationId, cursor) {
+    return (await api.get<MessagePage>(`/chat/messages/${encodeURIComponent(conversationId)}`, { params: cursor })).data;
   },
   async search(query, signal) {
     const path = query ? '/chat/users/search' : '/chat/users';
@@ -50,11 +56,11 @@ export const liveChat: ChatService = {
   async start(participantId) {
     return (await api.post<Conversation>('/chat/conversations', { participantId })).data;
   },
-  async send(conversationId, content) {
-    return (await api.post<Message>('/chat/messages', { conversationId, content })).data;
+  async send(conversationId, content, clientMessageId) {
+    return (await api.post<Message>('/chat/messages', { conversationId, content, clientMessageId })).data;
   },
   async suggest(message) {
-    const { data } = await api.post<{ replies: string[] }>('/chat/smart-replies', { messageContent: message.content });
+    const { data } = await api.post<{ replies: string[] }>('/chat/smart-replies', { conversationId: message.conversationId, messageId: message._id });
     return data.replies;
   },
   async summarize(conversationId) {

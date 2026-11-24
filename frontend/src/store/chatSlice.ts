@@ -6,19 +6,47 @@ interface ChatState {
   conversations: Conversation[];
   messages: Partial<Record<string, Message[]>>;
   inboxStatus: LoadStatus;
+  inboxRequest?: string;
+  latestSynced: Partial<Record<string, string>>;
+  before: Partial<Record<string, string | null>>;
+  syncRequests: Partial<Record<string, string>>;
+  olderStatus: Partial<Record<string, LoadStatus>>;
   threadStatus: Partial<Record<string, LoadStatus>>;
 }
 
-const initialState: ChatState = { conversations: [], messages: {}, inboxStatus: 'idle', threadStatus: {} };
-const chatTask = createAsyncThunk.withTypes<{ extra: ChatService }>();
+const initialState: ChatState = {
+  conversations: [], messages: {}, inboxStatus: 'idle', threadStatus: {},
+  latestSynced: {}, before: {}, syncRequests: {}, olderStatus: {},
+};
+const chatTask = createAsyncThunk.withTypes<{ extra: ChatService; state: { chat: ChatState } }>();
 
 export const fetchConversations = chatTask('chat/fetchConversations', (_, { extra }) => extra.conversations());
-export const fetchMessages = chatTask('chat/fetchMessages', (id: string, { extra }) => extra.messages(id));
+export const fetchMessages = chatTask('chat/fetchMessages', async (id: string, { extra, getState }) => {
+  const latest = getState().chat.latestSynced[id];
+  if (!latest) {
+    const page = await extra.messages(id);
+    return { messages: page.messages, latest: page.messages.at(-1)?._id, before: page.nextCursor };
+  }
+  const messages: Message[] = [];
+  let after: string | null = latest;
+  while (after) {
+    const page = await extra.messages(id, { after });
+    messages.push(...page.messages);
+    after = page.nextCursor;
+  }
+  return { messages, latest: messages.at(-1)?._id ?? latest };
+});
+
+export const fetchOlder = chatTask('chat/fetchOlder', (id: string, { extra, getState }) => {
+  const before = getState().chat.before[id];
+  return before ? extra.messages(id, { before }) : { messages: [], nextCursor: null };
+}, { condition: (id, { getState }) => !!getState().chat.before[id] && getState().chat.olderStatus[id] !== 'loading' });
 export const searchUsers = chatTask('chat/searchUsers', (query: string, { extra, signal }) => extra.search(query, signal));
 export const createConversation = chatTask('chat/createConversation', (id: string, { extra }) => extra.start(id));
 export const sendMessage = chatTask(
   'chat/sendMessage',
-  ({ conversationId, content }: { conversationId: string; content: string }, { extra }) => extra.send(conversationId, content),
+  ({ conversationId, content, clientMessageId }: { conversationId: string; content: string; clientMessageId: string },
+    { extra }) => extra.send(conversationId, content, clientMessageId),
 );
 export const suggestReplies = chatTask('chat/suggestReplies', (message: Message, { extra }) => extra.suggest(message));
 export const summarizeThread = chatTask('chat/summarize', (id: string, { extra }) => extra.summarize(id));
@@ -27,11 +55,21 @@ function sortConversations(conversations: Conversation[]) {
   conversations.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
+function compareMessages(a: Message, b: Message) {
+  return Date.parse(a.createdAt) - Date.parse(b.createdAt) || a._id.localeCompare(b._id);
+}
+
+function mergeMessages(current: Message[], fetched: Message[]) {
+  const byId = new Map(current.map(message => [message._id, message]));
+  for (const message of fetched) byId.set(message._id, message);
+  return [...byId.values()].sort(compareMessages);
+}
+
 function addMessage(state: ChatState, message: Message) {
   const messages = state.messages[message.conversationId] ??= [];
   if (messages.some((item) => item._id === message._id)) return;
   messages.push(message);
-  messages.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  messages.sort(compareMessages);
 
   const conversation = state.conversations.find((item) => item._id === message.conversationId);
   if (conversation && Date.parse(message.createdAt) >= Date.parse(conversation.lastMessage?.createdAt ?? conversation.createdAt)) {
@@ -55,10 +93,12 @@ const chatSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      .addCase(fetchConversations.pending, (state) => {
+      .addCase(fetchConversations.pending, (state, { meta }) => {
+        state.inboxRequest = meta.requestId;
         if (state.inboxStatus !== 'ready') state.inboxStatus = 'loading';
       })
       .addCase(fetchConversations.fulfilled, (state, action) => {
+        if (state.inboxRequest !== action.meta.requestId) return;
         state.inboxStatus = 'ready';
         state.conversations = action.payload.map((conversation) => {
           const messages = state.messages[conversation._id];
@@ -72,22 +112,36 @@ const chatSlice = createSlice({
         });
         sortConversations(state.conversations);
       })
-      .addCase(fetchConversations.rejected, (state) => {
-        state.inboxStatus = 'error';
+      .addCase(fetchConversations.rejected, (state, { meta }) => {
+        if (state.inboxRequest === meta.requestId) state.inboxStatus = 'error';
       })
       .addCase(fetchMessages.pending, (state, { meta }) => {
+        state.syncRequests[meta.arg] = meta.requestId;
         if (state.threadStatus[meta.arg] !== 'ready') state.threadStatus[meta.arg] = 'loading';
       })
       .addCase(fetchMessages.fulfilled, (state, { meta, payload }) => {
-        const byId = new Map(payload.map((message) => [message._id, message]));
-        for (const message of state.messages[meta.arg] ?? []) {
-          if (!byId.has(message._id)) byId.set(message._id, message);
-        }
-        state.messages[meta.arg] = [...byId.values()].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+        if (state.syncRequests[meta.arg] !== meta.requestId) return;
+        delete state.syncRequests[meta.arg];
+        state.messages[meta.arg] = mergeMessages(state.messages[meta.arg] ?? [], payload.messages);
+        state.latestSynced[meta.arg] = payload.latest;
+        if (payload.before !== undefined) state.before[meta.arg] = payload.before;
         state.threadStatus[meta.arg] = 'ready';
       })
       .addCase(fetchMessages.rejected, (state, { meta }) => {
+        if (state.syncRequests[meta.arg] !== meta.requestId) return;
+        delete state.syncRequests[meta.arg];
         state.threadStatus[meta.arg] = 'error';
+      })
+      .addCase(fetchOlder.pending, (state, { meta }) => {
+        state.olderStatus[meta.arg] = 'loading';
+      })
+      .addCase(fetchOlder.fulfilled, (state, { meta, payload }) => {
+        state.messages[meta.arg] = mergeMessages(state.messages[meta.arg] ?? [], payload.messages);
+        state.before[meta.arg] = payload.nextCursor;
+        state.olderStatus[meta.arg] = 'ready';
+      })
+      .addCase(fetchOlder.rejected, (state, { meta }) => {
+        state.olderStatus[meta.arg] = 'error';
       })
       .addCase(createConversation.fulfilled, (state, { payload }) => {
         if (!state.conversations.some(({ _id }) => _id === payload._id)) {

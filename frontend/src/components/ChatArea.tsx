@@ -1,9 +1,9 @@
 'use client';
 
-import { Fragment, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, ArrowUp, Check, CheckCheck, FileText, MessageSquare, X } from 'lucide-react';
-import { fetchMessages, sendMessage, suggestReplies, summarizeThread } from '../store/chatSlice';
+import { fetchMessages, fetchOlder, sendMessage, suggestReplies, summarizeThread } from '../store/chatSlice';
 import type { Conversation, Message, Participant } from '../store/chatService';
 import { useAppDispatch, useAppSelector } from '../store/Providers';
 import { conversationName, conversationPerson } from './Sidebar';
@@ -21,16 +21,20 @@ function timeOf(message: Message) {
   return timeFormat.format(new Date(message.createdAt));
 }
 
-export function ChatArea({ conversation, user, inboxHref, demo }: {
+export function ChatArea({ conversation, user, inboxHref, assistanceEnabled }: {
   conversation: Conversation;
   user: Participant;
   inboxHref: string;
-  demo?: boolean;
+  assistanceEnabled: boolean;
 }) {
   const id = conversation._id;
   const dispatch = useAppDispatch();
   const messages = useAppSelector((state) => state.chat.messages[id] ?? emptyMessages);
   const status = useAppSelector((state) => state.chat.threadStatus[id]);
+  const before = useAppSelector((state) => state.chat.before[id]);
+  const olderStatus = useAppSelector((state) => state.chat.olderStatus[id]);
+  const previousScroll = useRef<{ height: number; top: number } | null>(null);
+  const pendingMessage = useRef<{ content: string; id: string } | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
@@ -50,12 +54,27 @@ export function ChatArea({ conversation, user, inboxHref, demo }: {
   const incoming = newestMessage && newestMessage.senderId !== user._id ? newestMessage : undefined;
   const visibleReplies = incoming && replies?.messageId === incoming._id ? replies.items : [];
 
-  useEffect(() => { void dispatch(fetchMessages(id)); }, [dispatch, id]);
-
   useEffect(() => {
     const scroll = transcript.current;
     if (scroll && followMessages.current) scroll.scrollTop = scroll.scrollHeight;
   }, [messages]);
+
+  useLayoutEffect(() => {
+    if (olderStatus === 'loading') return;
+    const previous = previousScroll.current;
+    const scroll = transcript.current;
+    if (olderStatus === 'ready' && previous && scroll) {
+      scroll.scrollTop = previous.top + scroll.scrollHeight - previous.height;
+    }
+    previousScroll.current = null;
+  }, [olderStatus, messages]);
+
+  function loadEarlier() {
+    const scroll = transcript.current;
+    if (scroll) previousScroll.current = { height: scroll.scrollHeight, top: scroll.scrollTop };
+    followMessages.current = false;
+    void dispatch(fetchOlder(id));
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -65,7 +84,11 @@ export function ChatArea({ conversation, user, inboxHref, demo }: {
     setSendError('');
     try {
       followMessages.current = true;
-      await dispatch(sendMessage({ conversationId: id, content })).unwrap();
+      const attempt = pendingMessage.current?.content === content
+        ? pendingMessage.current : { content, id: crypto.randomUUID() };
+      pendingMessage.current = attempt;
+      await dispatch(sendMessage({ conversationId: id, content, clientMessageId: attempt.id })).unwrap();
+      pendingMessage.current = null;
       setDraft((current) => current.trim() === content ? '' : current);
     } catch {
       setSendError('Message could not be sent. Try sending it again.');
@@ -123,15 +146,15 @@ export function ChatArea({ conversation, user, inboxHref, demo }: {
           <h1 id="thread-heading">{name}</h1>
           {person?.username && <p>@{person.username}</p>}
         </div>
-        <button type="button" className="button button--outline summary-button" disabled={!messages.length}
+        {assistanceEnabled && <button type="button" className="button button--outline summary-button" disabled={!messages.length}
           aria-expanded={summaryOpen} aria-controls="thread-summary" onClick={() => void toggleSummary()}>
           <FileText size={16} aria-hidden="true" /> <span>Summary</span>
-        </button>
+        </button>}
       </header>
-      {summaryOpen && (
+      {assistanceEnabled && summaryOpen && (
         <section id="thread-summary" className="summary-box" aria-label="Conversation summary">
           <div className="summary-title">
-            <h2>{demo ? 'Sample summary' : 'Conversation summary'}</h2>
+            <h2>Conversation summary</h2>
             <button type="button" className="icon-button" aria-label="Close summary" onClick={() => setSummaryOpen(false)}>
               <X size={16} aria-hidden="true" />
             </button>
@@ -144,6 +167,13 @@ export function ChatArea({ conversation, user, inboxHref, demo }: {
           followMessages.current = currentTarget.scrollHeight - currentTarget.scrollTop - currentTarget.clientHeight < 64;
         }}>
         <div className="transcript-content">
+          {before && (
+            <div className="thread-note">
+              <button type="button" className="button button--outline" disabled={olderStatus === 'loading'} onClick={loadEarlier}>
+                {olderStatus === 'loading' ? 'Loading earlier messages…' : olderStatus === 'error' ? 'Retry earlier messages' : 'Load earlier messages'}
+              </button>
+            </div>
+          )}
           {(status === 'idle' || status === 'loading' || !status) && !messages.length && <p className="thread-note">Loading messages…</p>}
           {status === 'error' && (
             <div className="thread-note" role="alert">Could not load messages.{' '}
@@ -181,12 +211,12 @@ export function ChatArea({ conversation, user, inboxHref, demo }: {
         </div>
       </div>
       <div className="composer-region">
-        <div className="composer-tools">
+        {assistanceEnabled && <div className="composer-tools">
           {incoming && <button type="button" className="suggest-button" disabled={suggesting} onClick={() => void requestReplies()}>
             <MessageSquare size={16} aria-hidden="true" /> {suggesting ? 'Looking for replies…' : 'Suggest replies'}
           </button>}
           {!!visibleReplies.length && (
-            <div className="reply-list" aria-label={demo ? 'Sample replies' : 'Suggested replies'}>
+            <div className="reply-list" aria-label="Suggested replies">
               {visibleReplies.map((reply, index) => (
                 <button key={`${index}-${reply}`} type="button" className="reply-option" onClick={() => {
                   setDraft(reply);
@@ -196,7 +226,7 @@ export function ChatArea({ conversation, user, inboxHref, demo }: {
             </div>
           )}
           {replyError && <p className="form-error" role="status">{replyError}</p>}
-        </div>
+        </div>}
         <form className="composer" onSubmit={(event) => void submit(event)}>
           <textarea ref={input} aria-label={`Message ${name}`} placeholder={`Message ${name.split(' ')[0]}`}
             rows={2} maxLength={4000} value={draft} onChange={({ target }) => setDraft(target.value)}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { GoogleOAuthProvider, useGoogleLogin } from '@react-oauth/google';
+import { GoogleLogin, GoogleOAuthProvider } from '@react-oauth/google';
 import { ArrowRight } from 'lucide-react';
 import { AccountFrame } from './AccountFrame';
 import { clearAuthError, googleAuthUser, loginUser, registerUser } from '../store/authSlice';
@@ -12,17 +12,11 @@ const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
 function GoogleButton({ disabled, onError }: { disabled: boolean; onError: () => void }) {
   const dispatch = useAppDispatch();
-  const begin = useGoogleLogin({
-    onSuccess: ({ access_token }) => { void dispatch(googleAuthUser({ token: access_token })); },
-    onError,
-    onNonOAuthError: (error) => { if (error.type !== 'popup_closed') onError(); },
-  });
-
-  return (
-    <button type="button" className="button button--outline google-button" disabled={disabled} onClick={() => begin()}>
-      <span className="google-mark" aria-hidden="true">G</span> Continue with Google
-    </button>
-  );
+  if (disabled) return <span role="status">Preparing sign-in…</span>;
+  return <GoogleLogin onSuccess={({ credential }) => {
+    if (credential) void dispatch(googleAuthUser({ idToken: credential }));
+    else onError();
+  }} onError={onError} text="continue_with" />;
 }
 
 export default function AuthPage() {
@@ -86,9 +80,9 @@ export default function AuthPage() {
           <label>
             Password
             <input name="password" type="password" autoComplete={registering ? 'new-password' : 'current-password'}
-              minLength={registering ? 6 : undefined} aria-describedby={registering ? 'password-help' : undefined} required />
+              minLength={registering ? 8 : undefined} aria-describedby={registering ? 'password-help' : undefined} required />
           </label>
-          {registering && <span className="muted" id="password-help">Use at least 6 characters</span>}
+          {registering && <span className="muted" id="password-help">Use at least 8 characters</span>}
         </div>
         {(error || googleError) && <p className="form-error" role="alert">{error || 'Google sign-in could not start. Try again.'}</p>}
         <button className="button button--primary account-submit" type="submit" disabled={pending || !ready}>

@@ -1,27 +1,26 @@
-import axios from 'axios';
+import axios, { type InternalAxiosRequestConfig } from 'axios';
 
-export const API_HOST = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:6001').replace(/\/+$/, '');
 export const SESSION_EXPIRED = 'chatsphere:session-expired';
 
-export function readToken() {
-  return typeof window === 'undefined' ? null : window.localStorage.getItem('token');
-}
+const api = axios.create({ baseURL: '/api/backend', timeout: 15000 });
+const requestRevision = new WeakMap<InternalAxiosRequestConfig, number>();
+let sessionRevision = 0;
 
-const api = axios.create({ baseURL: `${API_HOST}/api`, timeout: 15000 });
+const opensSession = (url?: string) => /^\/auth\/(login|register|google)$/.test(url || '');
 
 api.interceptors.request.use((config) => {
-  const token = readToken();
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  requestRevision.set(config, sessionRevision);
   return config;
 });
 
-api.interceptors.response.use(undefined, (error) => {
-  if (axios.isAxiosError(error) && error.response?.status === 401 && typeof window !== 'undefined') {
-    const token = readToken();
-    const usesSession = !/^\/auth\/(login|register|google)$/.test(error.config?.url || '');
-    if (usesSession && token && error.config?.headers.Authorization === `Bearer ${token}`) {
-      window.dispatchEvent(new Event(SESSION_EXPIRED));
-    }
+api.interceptors.response.use((response) => {
+  if (opensSession(response.config.url) || response.config.url === '/auth/logout') sessionRevision++;
+  return response;
+}, (error) => {
+  if (axios.isAxiosError(error) && error.response?.status === 401 && typeof window !== 'undefined' &&
+    error.config && !opensSession(error.config.url) && error.config.url !== '/auth/session' &&
+    requestRevision.get(error.config) === sessionRevision) {
+    window.dispatchEvent(new Event(SESSION_EXPIRED));
   }
   return Promise.reject(error);
 });

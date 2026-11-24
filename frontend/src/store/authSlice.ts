@@ -1,5 +1,5 @@
 import { createAsyncThunk, createSlice, isAnyOf, type PayloadAction } from '@reduxjs/toolkit';
-import api, { getErrorMessage, readToken } from '../api';
+import api, { getErrorMessage } from '../api';
 
 export interface User {
   _id: string;
@@ -20,7 +20,6 @@ const initialState: AuthState = { user: null, ready: false, pending: false, erro
 
 interface Session {
   user: User;
-  token: string;
 }
 
 function accountAction<Payload>(action: string, path: string, errorMessage: string) {
@@ -29,8 +28,6 @@ function accountAction<Payload>(action: string, path: string, errorMessage: stri
     async (payload, { rejectWithValue }) => {
       try {
         const { data } = await api.post<Session>(path, payload);
-        window.localStorage.setItem('token', data.token);
-        window.localStorage.setItem('user', JSON.stringify(data.user));
         return data.user;
       } catch (error) {
         return rejectWithValue(getErrorMessage(error, errorMessage));
@@ -45,30 +42,41 @@ export const loginUser = accountAction<{ identifier: string; password: string }>
 export const registerUser = accountAction<{ name: string; email: string; password: string }>(
   'register', '/auth/register', 'Could not create your account. Try again.',
 );
-export const googleAuthUser = accountAction<{ token: string }>(
+export const googleAuthUser = accountAction<{ idToken: string }>(
   'google', '/auth/google', 'Could not sign in with Google. Try again.',
 );
 export const chooseUsername = accountAction<{ username: string }>(
   'username', '/auth/choose-username', 'Could not save your username. Try again.',
 );
 
-export function restoreUser() {
+export async function restoreUser() {
+  // Clear persisted credentials from the previous browser session format.
   try {
-    const serialized = window.localStorage.getItem('user');
-    if (!readToken() || !serialized) return null;
-    const user: User | null = JSON.parse(serialized);
-    return user && typeof user._id === 'string' && typeof user.name === 'string' ? user : null;
+    window.localStorage.removeItem('token');
+    window.localStorage.removeItem('user');
+  } catch {
+    // Cookie-backed sessions work even when browser storage is unavailable.
+  }
+  try {
+    return (await api.get<Session>('/auth/session')).data.user;
   } catch {
     return null;
   }
 }
 
-export function clearSession() {
-  window.localStorage.removeItem('token');
-  window.localStorage.removeItem('user');
-}
+export const signOut = createAsyncThunk<null, void, { rejectValue: string }>(
+  'auth/signOut',
+  async (_, { rejectWithValue }) => {
+    try {
+      await api.post('/auth/logout', {});
+      return null;
+    } catch (error) {
+      return rejectWithValue(getErrorMessage(error, 'Could not sign out. Try again.'));
+    }
+  },
+);
 
-const authActions = [loginUser, registerUser, googleAuthUser, chooseUsername] as const;
+const authActions = [loginUser, registerUser, googleAuthUser, chooseUsername, signOut] as const;
 
 const authSlice = createSlice({
   name: 'auth',
