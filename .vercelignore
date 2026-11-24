@@ -1,0 +1,7 @@
+mobile/
+**/.env
+**/.env.*
+**/node_modules/
+**/.next/
+**/dist/
+backend/tests/
