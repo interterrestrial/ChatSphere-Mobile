@@ -19,6 +19,10 @@ if (release) {
 const config: ExpoConfig = {
   name: 'ChatSphere',
   slug: 'chatsphere-mobile',
+  owner: 'deepakmishra16',
+  extra: {
+    eas: { projectId: '17c42fad-0a83-421c-b4d9-5d8aebf02bac' },
+  },
   scheme: 'chatsphere',
   version: '1.0.0',
   platforms: ['android'],
