@@ -5,7 +5,7 @@ Next.js and Express share one Vercel project. The Next.js Node.js API route auth
 | Surface | Session | Message synchronization |
 | --- | --- | --- |
 | Vercel web | Secure HttpOnly cookie and revocable MongoDB session | Authenticated cursor polling with visibility-aware backoff |
-| Standalone API for the future native release | Bearer session | Socket.IO tickets and private rooms |
+| Vercel Android | Bearer session in Android SecureStore | Authenticated foreground polling and Firebase push |
 
 The same-origin web API rejects cross-origin writes and marks session responses as uncacheable. Express verifies Google ID-token audiences and revokes server sessions on logout. Sign-in, registration, and Gemini limits share MongoDB counters. The API bounds each request body and message page.
 
@@ -20,4 +20,6 @@ The same-origin web API rejects cross-origin writes and marks session responses 
 
 The Vercel health route is `/api/health`. It checks the database connection and index initialization. Vercel messaging uses HTTPS polling because Vercel Functions do not run the standalone Socket.IO server.
 
-The native release and Firebase delivery remain separate work. The standalone API can still run with `npm start --prefix backend` for that phase.
+Android calls the separate `/api/mobile` route on the same deployment. The route exclusively reads bearer credentials. The browser adapter continues to read the session cookie and validate the origin on writes.
+
+When push is enabled, either adapter schedules a Vercel Queue publish after a message is saved. The queue callback resolves current recipient registrations and sends generic alerts through Firebase Cloud Messaging. A Firebase failure leaves the saved message available to both clients. The standalone API remains available with `npm start --prefix backend`.

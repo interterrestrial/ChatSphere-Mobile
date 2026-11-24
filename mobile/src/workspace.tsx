@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
-import { io } from 'socket.io-client';
-import { accounts, apiUrl, ApiError, createLiveChat } from './api';
+import { createLiveChat } from './api';
 import { chatReducer, initialChat, type ChatState } from './chat-state';
 import type { ChatService, Conversation, Message, Person } from './contracts';
 import { createDemoChat } from './demo';
@@ -11,7 +10,7 @@ interface Workspace extends ChatState {
   user: Person;
   demo: boolean;
   reconnecting: boolean;
-  reloadInbox(): Promise<void>;
+  reloadInbox(): Promise<boolean | undefined>;
   reloadThread(id: string): Promise<void>;
   loadEarlier(id: string, before: string): Promise<void>;
   focusThread(id: string): () => void;
@@ -23,7 +22,7 @@ interface Workspace extends ChatState {
 }
 
 const WorkspaceContext = createContext<Workspace | null>(null);
-const refreshInterval = 8000;
+const refreshInterval = 5000;
 
 export function WorkspaceProvider({ children, user, demo, token }: {
   children: ReactNode;
@@ -54,8 +53,13 @@ export function WorkspaceProvider({ children, user, demo, token }: {
       const conversations = await service.conversations();
       if (request !== inboxRequest.current) return;
       dispatch({ type: 'inbox-loaded', conversations });
+      setReconnecting(false);
+      return true;
     } catch {
-      if (request === inboxRequest.current) dispatch({ type: 'inbox-status', status: 'error' });
+      if (request !== inboxRequest.current) return;
+      dispatch({ type: 'inbox-status', status: 'error' });
+      setReconnecting(true);
+      return false;
     } finally {
       if (request === inboxRequest.current) inboxRequest.current = undefined;
     }
@@ -133,77 +137,41 @@ export function WorkspaceProvider({ children, user, demo, token }: {
   }, [state.conversations, state.threads, reloadInbox, service]);
 
   useEffect(() => {
-    void reloadInbox();
-    if (demo || !token) return;
+    if (demo) {
+      void reloadInbox();
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    let pending = false;
+    let interval = refreshInterval;
 
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    const socket = io(apiUrl, {
-      autoConnect: false,
-      auth: (callback) => {
-        void accounts.socketTicket(token).then(
-          ({ token: ticket }) => callback({ token: ticket }),
-          (error: unknown) => {
-            if (error instanceof ApiError && error.status === 401) expireToken(token);
-            callback({});
-          },
-        );
-      },
-    });
-    const reconnect = () => {
-      clearTimeout(retry);
-      if (AppState.currentState !== 'background') retry = setTimeout(() => socket.connect(), 3000);
-    };
-    const stale = () => setReconnecting(true);
-    const sync = () => {
-      if (!inboxRequest.current) void reloadInbox(true);
+    async function sync() {
+      if (stopped || pending || AppState.currentState === 'background') return;
+      pending = true;
+      clearTimeout(timer);
       const id = activeThread.current;
-      if (id && !threadRequests.current.has(id)) void reloadThread(id, true);
-    };
-    const refresh = () => {
-      clearTimeout(retry);
-      setReconnecting(false);
-      sync();
-    };
+      const [inbox] = await Promise.all([
+        !inboxRequest.current ? reloadInbox(true) : undefined,
+        id && !threadRequests.current.has(id) ? reloadThread(id, true) : undefined,
+      ]);
+      pending = false;
+      if (stopped || AppState.currentState !== 'active') return;
+      interval = inbox === false ? Math.min(interval * 2, 30_000) : refreshInterval;
+      timer = setTimeout(() => void sync(), interval);
+    }
 
-    socket.on('ready', refresh);
-    socket.on('disconnect', (reason) => {
-      stale();
-      if (reason === 'io server disconnect') reconnect();
-    });
-    socket.on('connect_error', () => {
-      stale();
-      if (!socket.active) reconnect();
-    });
-    socket.on('newMessage', (message: Message) => {
-      dispatch({ type: 'message', message });
-      void reloadInbox(true);
-    });
-    if (AppState.currentState !== 'background') socket.connect();
-
-    // Messages sent through the serverless web API do not reach this socket server.
-    const poll = setInterval(() => {
-      if (AppState.currentState === 'active') sync();
-    }, refreshInterval);
+    void sync();
     const subscription = AppState.addEventListener('change', (status) => {
-      if (status === 'active') {
-        if (socket.connected) refresh();
-        else {
-          sync();
-          socket.connect();
-        }
-      } else if (status === 'background') {
-        clearTimeout(retry);
-        socket.disconnect();
-      }
+      if (status === 'active') void sync();
+      else clearTimeout(timer);
     });
     return () => {
-      clearTimeout(retry);
-      clearInterval(poll);
+      stopped = true;
+      clearTimeout(timer);
       subscription.remove();
-      socket.removeAllListeners();
-      socket.disconnect();
     };
-  }, [demo, token, expireToken, reloadInbox, reloadThread]);
+  }, [demo, reloadInbox, reloadThread]);
 
   async function start(person: string) {
     const conversation = await service.start(person);

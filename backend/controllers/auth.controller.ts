@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { OAuth2Client } from 'google-auth-library';
 import User from '../models/user.model';
 import Session from '../models/session.model';
+import PushDevice from '../models/pushDevice.model';
 import { comparePasswords, createSession, createSocketTicket, hashPassword } from '../utils/authUtils';
 import { identity, type AuthRequest } from '../middlewares/authMiddleware';
 import { duplicateKey, HttpError, textField } from '../http';
@@ -108,5 +109,6 @@ export async function logout(req: AuthRequest, res: Response) {
     const { userId, sessionId } = identity(req);
     await Session.deleteOne({ _id: sessionId, userId });
     disconnectSession(sessionId);
+    await PushDevice.deleteMany({ userId, sessionId });
     res.status(204).end();
 }

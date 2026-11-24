@@ -16,6 +16,7 @@ const MessageSchema = new mongoose.Schema({
         required: true
     },
     clientMessageId: { type: String, select: false },
+    pushDeliveredTo: { type: [String], select: false, default: undefined },
     isRead: {
         type: Boolean,
         default: false

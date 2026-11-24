@@ -13,7 +13,26 @@
         "buildType": "apk"
       }
     },
+    "release-check": {
+      "distribution": "internal",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_ENABLE_PUSH": "false",
+        "CHATSPHERE_ALLOW_HTTP": "false"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "release-apk": {
+      "extends": "release-check",
+      "env": {
+        "EXPO_PUBLIC_ENABLE_PUSH": "true",
+        "CHATSPHERE_ALLOW_HTTP": "false"
+      }
+    },
     "production": {
+      "extends": "release-apk",
       "distribution": "store",
       "android": {
         "buildType": "app-bundle"

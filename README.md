@@ -29,6 +29,6 @@ Vercel web sessions use HTTP-only cookies. Open inboxes sync over authenticated 
 
 - **Backend** — Run `npm run build --prefix backend`. For the integration suite, point `TEST_MONGO_URI` to a disposable loopback MongoDB process before running `npm test --prefix backend`. The suite drops only the temporary database it creates.
 - **Web** — Run `npm run lint --prefix frontend`, `npm run build --prefix frontend`, and `npm run typecheck --prefix frontend`.
-- **Android** — Client source and checks remain in `mobile/`. Configure Android Google sign-in with the app’s package and signing fingerprint when preparing the native release.
+- **Android** — Run `npm run typecheck --prefix mobile` and `npm run bundle:android --prefix mobile`. The bundle check verifies the JavaScript build. Follow the [Android release steps](ANDROID_RELEASE.md) for signed APKs and Firebase.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the request and synchronization flow.

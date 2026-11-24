@@ -2,6 +2,7 @@ import type { ChatService, Conversation, Message, MessagePage, Person, Session, 
 
 export const apiUrl = (process.env.EXPO_PUBLIC_API_URL ?? '').trim().replace(/\/+$/, '');
 export const googleClientId = (process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '').trim();
+export const pushEnabled = process.env.EXPO_PUBLIC_ENABLE_PUSH === 'true';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -27,7 +28,7 @@ async function request<T>(path: string, options: { token?: string; data?: object
     const headers = new Headers({ Accept: 'application/json' });
     if (options.token) headers.set('Authorization', `Bearer ${options.token}`);
     if (options.data) headers.set('Content-Type', 'application/json');
-    const response = await fetch(`${apiUrl}/api${path}`, {
+    const response = await fetch(`${apiUrl}/api/mobile${path}`, {
       headers,
       method: options.data ? 'POST' : 'GET',
       body: options.data ? JSON.stringify(options.data) : undefined,
@@ -52,7 +53,10 @@ export const accounts = {
   chooseUsername: (username: string, token: string) =>
     request<{ user: User }>('/auth/choose-username', { token, data: { username } }),
   logout: (token: string) => request<void>('/auth/logout', { token, data: {} }),
-  socketTicket: (token: string) => request<{ token: string }>('/auth/socket-ticket', { token }),
+  registerDevice: (token: string, installationId: string, registrationToken: string) =>
+    request<void>('/notifications/register', { token, data: { installationId, registrationToken } }),
+  unregisterDevice: (token: string, installationId: string) =>
+    request<void>('/notifications/unregister', { token, data: { installationId } }),
 };
 
 export function createLiveChat(token: string, expire: () => void): ChatService {

@@ -3,7 +3,7 @@ import { Redirect } from 'expo-router';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { accounts, apiUrl, errorMessage, googleClientId } from '../src/api';
 import { Avatar, Brand, Button, Field, Loading, Notice, Screen } from '../src/components/ui';
-import { hasUsername, useSession } from '../src/session';
+import { demoEnabled, hasUsername, useSession } from '../src/session';
 import { colors, type } from '../src/theme';
 
 function Preview() {
@@ -79,10 +79,12 @@ export default function Index() {
             <Brand />
             <View style={styles.intro}>
               <Text accessibilityRole="header" style={type.headline}>
-                {apiUrl ? (register ? 'Create an account' : 'Sign in') : 'Pick up the conversation'}
+                {apiUrl ? (register ? 'Create an account' : 'Sign in') : demoEnabled ? 'Pick up the conversation' : 'ChatSphere is unavailable'}
               </Text>
               <Text style={type.supporting}>
-                {apiUrl ? 'Continue to your ChatSphere inbox.' : 'Explore the inbox, send a sample message, or try a suggested reply.'}
+                {apiUrl ? 'Continue to your ChatSphere inbox.' : demoEnabled
+                  ? 'Explore the inbox, send a sample message, or try a suggested reply.'
+                  : 'This build is missing its server configuration.'}
               </Text>
             </View>
             {apiUrl ? (
@@ -105,8 +107,9 @@ export default function Index() {
                   setError('');
                 }} />
               </View>
-            ) : <Preview />}
-            <Button label="Open sample inbox" icon="chat-bubble-outline" variant={apiUrl ? 'outlined' : 'filled'} disabled={!!pending} onPress={openDemo} />
+            ) : demoEnabled && <Preview />}
+            {demoEnabled && <Button label="Open sample inbox" icon="chat-bubble-outline"
+              variant={apiUrl ? 'outlined' : 'filled'} disabled={!!pending} onPress={openDemo} />}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

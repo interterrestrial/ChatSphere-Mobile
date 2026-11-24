@@ -4,6 +4,7 @@ import { accounts, apiUrl, ApiError } from './api';
 import type { Session } from './contracts';
 
 const storageKey = 'chatsphere.session.v1';
+export const demoEnabled = __DEV__;
 
 interface SessionContextValue {
   ready: boolean;
@@ -90,7 +91,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   return (
     <SessionContext.Provider value={{
       ready, session, demo, saveSession, signOut, expireToken,
-      openDemo: () => setDemo(true), exitDemo: () => setDemo(false),
+      openDemo: () => { if (demoEnabled) setDemo(true); }, exitDemo: () => setDemo(false),
     }}>
       {children}
     </SessionContext.Provider>

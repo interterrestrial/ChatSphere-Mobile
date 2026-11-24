@@ -11,3 +11,5 @@ expo-env.d.ts
 *.aab
 *.jks
 *.keystore
+google-services.json
+credentials.json

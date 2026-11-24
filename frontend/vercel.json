@@ -1,5 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "npm ci && npm ci --prefix ../backend"
+  "installCommand": "npm ci && npm ci --prefix ../backend",
+  "functions": {
+    "src/app/api/queues/message-push/route.ts": {
+      "experimentalTriggers": [
+        { "type": "queue/v2beta", "topic": "chatsphere-message-push" }
+      ]
+    }
+  }
 }

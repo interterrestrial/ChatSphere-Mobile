@@ -8,6 +8,9 @@ import { createApp } from '../app';
 import { connectDB } from '../db/db';
 import { initializeSocket } from '../utils/socket';
 import Message from '../models/message.model';
+import PushDevice from '../models/pushDevice.model';
+import { deliverMessagePush } from '../utils/deliverMessagePush';
+import { RetryablePushError } from '../utils/firebasePush';
 
 type Json = {
     token: string; user: { _id: string; username: string }; _id: string;
@@ -218,4 +221,56 @@ test('tracks unread messages per recipient and keeps read state across sessions 
     assert.equal((await inbox(bob.token)).unreadMessageId, null);
     const third = (await sending(alice.token, 'New unread after reading')).json._id;
     assert.equal((await inbox(bob.token)).unreadMessageId, third);
+});
+
+test('routes push to signed-in recipients, retries only failed devices, and removes registrations on logout', async () => {
+    const sender = await register('push_sender');
+    const recipient = await register('push_recipient');
+    const otherSession = (await request('/api/auth/login', undefined, {
+        identifier: 'push_recipient', password: 'long-test-password',
+    })).json.token;
+    const first = { installationId: randomUUID(), registrationToken: 'fixture:recipient-first-device' };
+    const second = { installationId: randomUUID(), registrationToken: 'fixture:recipient-second-device' };
+    assert.equal((await request('/api/notifications/register', undefined, first)).status, 401);
+    assert.equal((await request('/api/notifications/register', recipient.token, { ...first, installationId: 'invalid' })).status, 400);
+    assert.equal((await request('/api/notifications/register', recipient.token, first)).status, 204);
+    assert.equal((await request('/api/notifications/register', otherSession, second)).status, 204);
+    assert.equal((await request('/api/notifications/register', sender.token, {
+        installationId: randomUUID(), registrationToken: 'fixture:senders-own-device',
+    })).status, 204);
+    assert.equal((await request('/api/notifications/unregister', sender.token, { installationId: first.installationId })).status, 204);
+
+    const conversation = (await request('/api/chat/conversations', sender.token, { participantId: recipient.user._id })).json;
+    const send = async (content: string) => {
+        const result = await request('/api/chat/messages', sender.token, {
+            conversationId: conversation._id, content, clientMessageId: randomUUID(),
+        });
+        assert.equal(result.status, 201);
+        return result.json._id;
+    };
+    const messageId = await send('Message that should alert the recipient');
+    const attempts: string[] = [];
+    const transport = async (registrationToken: string, conversationId: string, id: string): Promise<'sent' | 'unregistered'> => {
+        assert.equal(conversationId, conversation._id);
+        assert.equal(id, messageId);
+        attempts.push(registrationToken);
+        if (registrationToken === second.registrationToken) {
+            if (attempts.filter(token => token === registrationToken).length === 1) throw new RetryablePushError(60);
+            return 'unregistered';
+        }
+        return 'sent';
+    };
+    await assert.rejects(deliverMessagePush(messageId, transport), (error: unknown) =>
+        error instanceof RetryablePushError && error.retryAfter === 60);
+    await deliverMessagePush(messageId, transport);
+    await deliverMessagePush(messageId, transport);
+    assert.deepEqual(attempts.sort(), [first.registrationToken, second.registrationToken, second.registrationToken].sort());
+    assert.equal(await PushDevice.exists({ _id: second.installationId }), null);
+
+    const readMessageId = await send('Read before push delivery');
+    assert.equal((await request('/api/chat/read', recipient.token, { conversationId: conversation._id, messageId: readMessageId })).status, 200);
+    await deliverMessagePush(readMessageId, async () => assert.fail('Read message should not trigger delivery'));
+    assert.equal((await request('/api/auth/logout', recipient.token, {})).status, 204);
+    assert.equal(await PushDevice.exists({ _id: first.installationId }), null);
+    await deliverMessagePush(await send('Recipient has signed out'), async () => assert.fail('Signed-out device should receive no push'));
 });

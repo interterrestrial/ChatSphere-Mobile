@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import authRoutes from './routes/auth.routes';
 import chatRoutes from './routes/chat.routes';
+import notificationRoutes from './routes/notifications.routes';
 import { readConfig } from './config';
 import { HttpError } from './http';
 
@@ -32,6 +33,7 @@ export function createApp(config = readConfig()) {
 
     app.use('/api/auth', authRoutes);
     app.use('/api/chat', chatRoutes);
+    app.use('/api/notifications', notificationRoutes);
     app.use((_req, res) => { res.status(404).json({ message: 'Route not found' }); });
 
     const handleError: ErrorRequestHandler = (error: unknown, req, res, next) => {
