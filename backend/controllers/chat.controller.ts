@@ -25,9 +25,15 @@ async function requireConversation(id: Types.ObjectId, userId: string) {
 }
 
 export async function getConversations(req: AuthRequest, res: Response) {
-    const conversations = await Conversation.find({ participants: identity(req).userId }).select(threadFields)
+    const userId = identity(req).userId;
+    const conversations = await Conversation.find({ participants: userId })
+        .select(`${threadFields} latestIncoming readThrough`)
         .populate('participants', publicPerson).populate('lastMessage', messageFields).sort({ updatedAt: -1, _id: -1 }).lean();
-    res.json(conversations);
+    res.json(conversations.map(({ latestIncoming, readThrough, ...conversation }) => {
+        const incoming = latestIncoming?.[userId]?.toString();
+        const read = readThrough?.[userId]?.toString();
+        return { ...conversation, unreadMessageId: incoming && (!read || incoming > read) ? incoming : null };
+    }));
 }
 
 export async function getMessages(req: AuthRequest, res: Response) {
@@ -67,17 +73,39 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         return existing;
     });
 
-    await Conversation.updateOne({
-        _id: conversationId,
-        $or: [{ lastMessage: null }, { lastMessage: { $lt: message._id } }],
-    }, { lastMessage: message._id, updatedAt: message.createdAt }, { timestamps: false });
+    const participants = conversation.participants.map(String);
+    const incoming = Object.fromEntries(participants.filter(id => id !== userId).map(id => {
+        const field = `latestIncoming.${id}`;
+        return [field, { $max: [`$${field}`, message._id] }];
+    }));
+    await Conversation.updateOne({ _id: conversationId }, [{
+        $set: {
+            lastMessage: { $max: ['$lastMessage', message._id] },
+            updatedAt: { $cond: [{ $lt: ['$lastMessage', message._id] }, message.createdAt, '$updatedAt'] },
+            ...incoming,
+        },
+    }], { timestamps: false, updatePipeline: true });
 
     const payload = {
         _id: message.id, conversationId: conversationId.toString(), senderId: userId,
         content: message.content, createdAt: message.createdAt, isRead: message.isRead,
     };
-    publishMessage(conversation.participants.map(String), payload);
+    publishMessage(participants, payload);
     res.status(created ? 201 : 200).json(payload);
+}
+
+export async function markConversationRead(req: AuthRequest, res: Response) {
+    const userId = identity(req).userId;
+    const conversationId = objectId(req.body?.conversationId, 'conversation');
+    const messageId = objectId(req.body?.messageId, 'message');
+    await requireConversation(conversationId, userId);
+    if (!await Message.exists({ _id: messageId, conversationId, senderId: { $ne: userId } })) {
+        throw new HttpError(404, 'Message not found');
+    }
+    await Conversation.updateOne({ _id: conversationId }, {
+        $max: { [`readThrough.${userId}`]: messageId },
+    }, { timestamps: false });
+    res.json({ ok: true });
 }
 
 export async function createConversation(req: AuthRequest, res: Response) {

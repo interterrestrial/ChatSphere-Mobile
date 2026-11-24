@@ -4,7 +4,7 @@ import { MongoRateLimitStore } from '../utils/rateLimitStore';
 import { identity, requireAuth } from '../middlewares/authMiddleware';
 import {
     getConversations, getMessages, sendMessage, createConversation, searchUsers, getAllUsers,
-    getSmartReplies, getConversationSummary,
+    getSmartReplies, getConversationSummary, markConversationRead,
 } from '../controllers/chat.controller';
 
 const router = Router();
@@ -22,6 +22,7 @@ router.get('/conversations', getConversations);
 router.post('/conversations', createConversation);
 router.get('/messages/:conversationId', getMessages);
 router.post('/messages', sendMessage);
+router.post('/read', markConversationRead);
 router.post('/smart-replies', aiLimit, getSmartReplies);
 router.get('/summary/:conversationId', aiLimit, getConversationSummary);
 

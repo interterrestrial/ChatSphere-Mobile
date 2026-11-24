@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { LogOut, MessageSquare } from 'lucide-react';
 import { signOut } from '../store/authSlice';
-import { fetchConversations, fetchMessages, markConversationRead } from '../store/chatSlice';
+import { fetchConversations, fetchMessages } from '../store/chatSlice';
 import type { Participant } from '../store/chatService';
 import { ChatProvider, useAppDispatch, useAppSelector } from '../store/Providers';
 import { Brand } from './Identity';
@@ -75,11 +75,7 @@ function Workspace({ user, onLogout, logoutPending, logoutError, assistanceEnabl
       </header>
       {logoutError && <p className="form-error" role="alert">{logoutError}</p>}
       <main className={`workspace${convId ? ' workspace--thread' : ''}`}>
-        <Sidebar user={user} activeId={convId} basePath="" onSelect={(id) => {
-          dispatch(markConversationRead(id));
-          void dispatch(fetchConversations());
-          router.push(`/c/${encodeURIComponent(id)}`);
-        }} />
+        <Sidebar user={user} activeId={convId} basePath="" onSelect={(id) => router.push(`/c/${encodeURIComponent(id)}`)} />
         {conversation ? <ChatArea key={conversation._id} conversation={conversation} user={user} inboxHref="/" assistanceEnabled={assistanceEnabled} />
           : (
             <section className="thread-placeholder">

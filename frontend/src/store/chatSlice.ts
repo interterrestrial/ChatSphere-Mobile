@@ -21,6 +21,13 @@ const initialState: ChatState = {
 const chatTask = createAsyncThunk.withTypes<{ extra: ChatService; state: { chat: ChatState } }>();
 
 export const fetchConversations = chatTask('chat/fetchConversations', (_, { extra }) => extra.conversations());
+export const markConversationRead = chatTask(
+  'chat/markConversationRead',
+  async ({ id, messageId }: { id: string; messageId: string }, { extra, dispatch }) => {
+    await extra.markRead(id, messageId);
+    void dispatch(fetchConversations());
+  },
+);
 export const fetchMessages = chatTask('chat/fetchMessages', async (id: string, { extra, getState }) => {
   const latest = getState().chat.latestSynced[id];
   if (!latest) {
@@ -86,10 +93,6 @@ const chatSlice = createSlice({
     receiveMessage(state, action: PayloadAction<Message>) {
       addMessage(state, action.payload);
     },
-    markConversationRead(state, action: PayloadAction<string>) {
-      const conversation = state.conversations.find(({ _id }) => _id === action.payload);
-      if (conversation) conversation.unreadCount = 0;
-    },
   },
   extraReducers: (builder) => {
     builder
@@ -103,17 +106,20 @@ const chatSlice = createSlice({
         state.conversations = action.payload.map((conversation) => {
           const messages = state.messages[conversation._id];
           const newest = messages?.at(-1);
-          const previous = state.conversations.find(({ _id }) => _id === conversation._id);
-          const unreadCount = previous?.unreadCount === 0 ? 0 : conversation.unreadCount;
           if (newest && Date.parse(newest.createdAt) > Date.parse(conversation.updatedAt)) {
-            return { ...conversation, unreadCount, lastMessage: newest, updatedAt: newest.createdAt };
+            return { ...conversation, lastMessage: newest, updatedAt: newest.createdAt };
           }
-          return { ...conversation, unreadCount };
+          return conversation;
         });
         sortConversations(state.conversations);
       })
       .addCase(fetchConversations.rejected, (state, { meta }) => {
         if (state.inboxRequest === meta.requestId) state.inboxStatus = 'error';
+      })
+      .addCase(markConversationRead.fulfilled, (state, { meta }) => {
+        const { id, messageId } = meta.arg;
+        const conversation = state.conversations.find(({ _id }) => _id === id);
+        if (conversation?.unreadMessageId === messageId) conversation.unreadMessageId = null;
       })
       .addCase(fetchMessages.pending, (state, { meta }) => {
         state.syncRequests[meta.arg] = meta.requestId;
@@ -152,5 +158,5 @@ const chatSlice = createSlice({
   },
 });
 
-export const { receiveMessage, markConversationRead } = chatSlice.actions;
+export const { receiveMessage } = chatSlice.actions;
 export default chatSlice.reducer;

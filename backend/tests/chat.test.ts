@@ -166,3 +166,56 @@ test('restricts history and AI to members, deduplicates writes, pages history, a
     assert.equal((await request(messagesPath, bob.token)).status, 401);
     assert.equal((await request(messagesPath, alice.token)).status, 200);
 });
+
+test('tracks unread messages per recipient and keeps read state across sessions and retries', async () => {
+    const alice = await register('unread_alice');
+    const bob = await register('unread_bob');
+    const outsider = await register('unread_outside');
+    const bobSecondSession = (await request('/api/auth/login', undefined, {
+        identifier: 'unread_bob', password: 'long-test-password',
+    })).json.token;
+    const { json: { _id: conversationId } } = await request('/api/chat/conversations', alice.token, { participantId: bob.user._id });
+    const { json: { _id: otherConversationId } } = await request('/api/chat/conversations', bob.token, { participantId: outsider.user._id });
+    const inbox = async (token: string) => {
+        const result = await request('/api/chat/conversations', token);
+        assert.equal(result.status, 200);
+        const conversations = result.json as unknown as { _id: string; unreadMessageId: string | null; updatedAt: string }[];
+        const conversation = conversations.find(({ _id }) => _id === conversationId);
+        assert(conversation);
+        assert(!('readThrough' in conversation));
+        assert(!('latestIncoming' in conversation));
+        return conversation;
+    };
+    const sending = (token: string, content: string) => request('/api/chat/messages', token, {
+        conversationId, clientMessageId: randomUUID(), content,
+    });
+    const markRead = (token: string, messageId: string) => request('/api/chat/read', token, { conversationId, messageId });
+
+    assert.equal((await inbox(bob.token)).unreadMessageId, null);
+    const body = { conversationId, clientMessageId: randomUUID(), content: 'First unread message' };
+    const first = (await request('/api/chat/messages', alice.token, body)).json._id;
+    assert.equal((await inbox(alice.token)).unreadMessageId, null);
+    assert.equal((await inbox(bobSecondSession)).unreadMessageId, first);
+    assert.equal((await request(`/api/chat/messages/${conversationId}`, bob.token)).status, 200);
+    assert.equal((await inbox(bob.token)).unreadMessageId, first);
+    assert.equal((await markRead(outsider.token, first)).status, 404);
+    assert.equal((await request('/api/chat/read', bob.token, { conversationId: otherConversationId, messageId: first })).status, 404);
+
+    const second = (await sending(alice.token, 'Another unread message')).json._id;
+    const outgoing = (await sending(bob.token, 'A reply from Bob')).json._id;
+    assert.equal((await markRead(bob.token, outgoing)).status, 404);
+    assert.equal((await markRead(bob.token, first)).status, 200);
+    const beforeRead = await inbox(bob.token);
+    assert.equal(beforeRead.unreadMessageId, second);
+    assert.equal((await markRead(bob.token, second)).status, 200);
+    const afterRead = await inbox(bobSecondSession);
+    assert.equal(afterRead.unreadMessageId, null);
+    assert.equal(afterRead.updatedAt, beforeRead.updatedAt);
+    assert.equal((await inbox(alice.token)).unreadMessageId, outgoing);
+
+    assert.equal((await markRead(bob.token, first)).status, 200);
+    assert.equal((await request('/api/chat/messages', alice.token, body)).status, 200);
+    assert.equal((await inbox(bob.token)).unreadMessageId, null);
+    const third = (await sending(alice.token, 'New unread after reading')).json._id;
+    assert.equal((await inbox(bob.token)).unreadMessageId, third);
+});

@@ -75,6 +75,7 @@ export function createLiveChat(token: string, expire: () => void): ChatService {
     start: (participantId) => authenticated<Conversation>('/chat/conversations', { participantId }),
     send: (conversationId, content, clientMessageId) =>
       authenticated<Message>('/chat/messages', { conversationId, content, clientMessageId }),
+    markRead: (conversationId, messageId) => authenticated<void>('/chat/read', { conversationId, messageId }),
     async suggest(message) {
       return (await authenticated<{ replies: string[] }>('/chat/smart-replies', { conversationId: message.conversationId, messageId: message._id })).replies;
     },

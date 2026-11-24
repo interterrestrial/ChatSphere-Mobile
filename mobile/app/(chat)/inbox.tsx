@@ -84,8 +84,10 @@ export default function Inbox() {
             const person = conversationPerson(item, user._id);
             const title = conversationTitle(item, user._id);
             const latest = item.lastMessage;
+            const preview = latest ? `${latest.senderId === user._id ? 'You: ' : ''}${latest.content}` : 'No messages yet';
             return (
               <Pressable accessibilityRole="button" style={styles.row}
+                accessibilityLabel={`${title}, ${preview}${item.unreadMessageId ? ', unread messages' : ''}`}
                 android_ripple={{ color: colors.primarySoft }}
                 onPress={() => router.push({ pathname: '/conversation/[id]', params: { id: item._id } })}>
                 <Avatar name={title} id={person?._id} />
@@ -95,9 +97,10 @@ export default function Inbox() {
                     {latest && <Text style={type.meta}>{formatDate(latest.createdAt)}</Text>}
                   </View>
                   <Text style={type.supporting} numberOfLines={1}>
-                    {latest ? `${latest.senderId === user._id ? 'You: ' : ''}${latest.content}` : 'No messages yet'}
+                    {preview}
                   </Text>
                 </View>
+                {item.unreadMessageId && <View style={styles.unreadDot} />}
               </Pressable>
             );
           }}
@@ -128,5 +131,6 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, minWidth: 0, gap: 2 },
   rowTitle: { flexDirection: 'row', alignItems: 'baseline', gap: 12 },
   name: { flex: 1 },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
   account: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 64, paddingHorizontal: 20, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.rule },
 });

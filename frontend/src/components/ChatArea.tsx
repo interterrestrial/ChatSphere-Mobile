@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, ArrowUp, Check, CheckCheck, FileText, MessageSquare, X } from 'lucide-react';
-import { fetchMessages, fetchOlder, sendMessage, suggestReplies, summarizeThread } from '../store/chatSlice';
+import { fetchMessages, fetchOlder, markConversationRead, sendMessage, suggestReplies, summarizeThread } from '../store/chatSlice';
 import type { Conversation, Message, Participant } from '../store/chatService';
 import { useAppDispatch, useAppSelector } from '../store/Providers';
 import { conversationName, conversationPerson } from './Sidebar';
@@ -35,6 +35,7 @@ export function ChatArea({ conversation, user, inboxHref, assistanceEnabled }: {
   const olderStatus = useAppSelector((state) => state.chat.olderStatus[id]);
   const previousScroll = useRef<{ height: number; top: number } | null>(null);
   const pendingMessage = useRef<{ content: string; id: string } | null>(null);
+  const pendingReads = useRef(new Set<string>());
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
@@ -53,6 +54,16 @@ export function ChatArea({ conversation, user, inboxHref, assistanceEnabled }: {
   const newestMessage = messages.at(-1);
   const incoming = newestMessage && newestMessage.senderId !== user._id ? newestMessage : undefined;
   const visibleReplies = incoming && replies?.messageId === incoming._id ? replies.items : [];
+  const unreadMessageId = conversation.unreadMessageId;
+
+  useEffect(() => {
+    const pending = pendingReads.current;
+    if (!unreadMessageId || document.hidden || pending.has(unreadMessageId) || !messages.length) return;
+    const loaded = messages[0]._id > unreadMessageId || messages.some(({ _id }) => _id === unreadMessageId);
+    if (!loaded) return;
+    pending.add(unreadMessageId);
+    void dispatch(markConversationRead({ id, messageId: unreadMessageId })).then(() => pending.delete(unreadMessageId));
+  }, [dispatch, id, messages, unreadMessageId]);
 
   useEffect(() => {
     const scroll = transcript.current;

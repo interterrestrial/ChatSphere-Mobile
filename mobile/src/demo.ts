@@ -85,6 +85,7 @@ export function createDemoChat(): ChatService {
       conversationMap.set(id, { ...conversation, lastMessage: message, updatedAt: message.createdAt });
       return message;
     },
+    async markRead() {},
     async suggest(message) {
       return message.conversationId === 'maya'
         ? ['I’ll check it before 4.', 'Send me the final PDF.', 'Can we review it together?']

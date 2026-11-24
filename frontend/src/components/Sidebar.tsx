@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowUpRight, Plus, Search, X } from 'lucide-react';
 import { Avatar } from './Identity';
-import { createConversation, fetchConversations, markConversationRead, searchUsers } from '../store/chatSlice';
+import { createConversation, fetchConversations, searchUsers } from '../store/chatSlice';
 import type { Conversation, Participant } from '../store/chatService';
 import { useAppDispatch, useAppSelector } from '../store/Providers';
 
@@ -167,8 +167,7 @@ export function Sidebar({ user, activeId, basePath, onSelect }: {
             return (
               <li key={conversation._id}>
                 <Link className="conversation-link" href={`${basePath}/c/${encodeURIComponent(conversation._id)}`}
-                  aria-current={active ? 'page' : undefined}
-                  onClick={() => dispatch(markConversationRead(conversation._id))}>
+                  aria-current={active ? 'page' : undefined}>
                   <Avatar name={name} id={person?._id} />
                   <span className="conversation-text">
                     <span className="conversation-title">
@@ -182,7 +181,7 @@ export function Sidebar({ user, activeId, basePath, onSelect }: {
                       {conversation.lastMessage?.content || 'No messages yet'}
                     </span>
                   </span>
-                  {!!conversation.unreadCount && <span className="unread-dot" aria-label={`${conversation.unreadCount} unread`} />}
+                  {conversation.unreadMessageId && <span className="unread-dot" role="img" aria-label="Unread messages" />}
                 </Link>
               </li>
             );

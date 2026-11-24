@@ -9,7 +9,7 @@ const sessionAge = 7 * 24 * 60 * 60;
 const publicPosts = new Set(['auth/login', 'auth/register', 'auth/google']);
 const routes = {
   GET: /^(auth\/session|chat\/(users(\/search)?|conversations|(?:messages|summary)\/[a-f0-9]{24}))$/i,
-  POST: /^(auth\/(login|register|google|choose-username|logout)|chat\/(conversations|messages|smart-replies))$/,
+  POST: /^(auth\/(login|register|google|choose-username|logout)|chat\/(conversations|messages|read|smart-replies))$/,
 };
 const cookieOptions = {
   httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/',

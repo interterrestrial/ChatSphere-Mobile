@@ -23,7 +23,7 @@ export interface Conversation {
   lastMessage: Message | null;
   createdAt: string;
   updatedAt: string;
-  unreadCount?: number;
+  unreadMessageId?: string | null;
 }
 
 export type MessageCursor = { before: string } | { after: string };
@@ -38,6 +38,7 @@ export interface ChatService {
   search(query: string, signal: AbortSignal): Promise<Participant[]>;
   start(participantId: string): Promise<Conversation>;
   send(conversationId: string, content: string, clientMessageId: string): Promise<Message>;
+  markRead(conversationId: string, messageId: string): Promise<void>;
   suggest(message: Message): Promise<string[]>;
   summarize(conversationId: string): Promise<string>;
 }
@@ -58,6 +59,9 @@ export const liveChat: ChatService = {
   },
   async send(conversationId, content, clientMessageId) {
     return (await api.post<Message>('/chat/messages', { conversationId, content, clientMessageId })).data;
+  },
+  async markRead(conversationId, messageId) {
+    await api.post('/chat/read', { conversationId, messageId });
   },
   async suggest(message) {
     const { data } = await api.post<{ replies: string[] }>('/chat/smart-replies', { conversationId: message.conversationId, messageId: message._id });

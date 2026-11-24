@@ -15,6 +15,8 @@ const ConversationSchema = new mongoose.Schema({
         required: true
     }],
     directKey: { type: String, select: false },
+    latestIncoming: { type: Map, of: mongoose.Schema.Types.ObjectId, select: false },
+    readThrough: { type: Map, of: mongoose.Schema.Types.ObjectId, select: false },
     lastMessage: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Message",

@@ -19,6 +19,7 @@ export const initialChat: ChatState = {
 export type ChatAction =
   | { type: 'inbox-status'; status: LoadStatus }
   | { type: 'inbox-loaded'; conversations: Conversation[] }
+  | { type: 'conversation-read'; id: string; messageId: string }
   | { type: 'thread-status'; id: string; status: LoadStatus }
   | { type: 'thread-loaded'; id: string; messages: Message[]; before?: string | null }
   | { type: 'older-status'; id: string; status: LoadStatus }
@@ -56,6 +57,13 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         conversations: action.conversations
           .map((conversation) => withLatest(conversation, state.threads[conversation._id]?.messages.at(-1)))
           .sort(descending),
+      };
+    case 'conversation-read':
+      return {
+        ...state,
+        conversations: state.conversations.map((conversation) =>
+          conversation._id === action.id && conversation.unreadMessageId === action.messageId
+            ? { ...conversation, unreadMessageId: null } : conversation),
       };
     case 'thread-status': {
       const thread = state.threads[action.id] ?? { messages: [] };

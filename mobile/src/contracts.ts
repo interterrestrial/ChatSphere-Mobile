@@ -31,6 +31,7 @@ export interface Conversation {
   lastMessage: Message | null;
   createdAt: string;
   updatedAt: string;
+  unreadMessageId?: string | null;
 }
 
 export type MessageCursor = { after: string } | { before: string };
@@ -45,6 +46,7 @@ export interface ChatService {
   search(query: string, signal?: AbortSignal): Promise<Person[]>;
   start(personId: string): Promise<Conversation>;
   send(id: string, content: string, clientMessageId: string): Promise<Message>;
+  markRead(id: string, messageId: string): Promise<void>;
   suggest(message: Message): Promise<string[]>;
   summarize(id: string): Promise<string>;
 }

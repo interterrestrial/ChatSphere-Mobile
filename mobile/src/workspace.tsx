@@ -23,6 +23,7 @@ interface Workspace extends ChatState {
 }
 
 const WorkspaceContext = createContext<Workspace | null>(null);
+const refreshInterval = 8000;
 
 export function WorkspaceProvider({ children, user, demo, token }: {
   children: ReactNode;
@@ -38,31 +39,33 @@ export function WorkspaceProvider({ children, user, demo, token }: {
   }, [demo, token, expireToken]);
   const [state, dispatch] = useReducer(chatReducer, initialChat);
   const [reconnecting, setReconnecting] = useState(false);
-  const knownIds = useRef(new Set<string>());
   const activeThread = useRef<string | null>(null);
-  const inboxRequest = useRef(0);
-  const threadRequests = useRef(new Map<string, number>());
+  const inboxRequest = useRef<symbol | undefined>(undefined);
+  const threadRequests = useRef(new Map<string, symbol>());
   const latestSynced = useRef(new Map<string, string>());
   const loadingEarlier = useRef(new Set<string>());
+  const pendingReads = useRef(new Set<string>());
 
-  const reloadInbox = useCallback(async () => {
-    const request = ++inboxRequest.current;
-    dispatch({ type: 'inbox-status', status: 'loading' });
+  const reloadInbox = useCallback(async (background = false) => {
+    const request = Symbol();
+    inboxRequest.current = request;
+    if (!background) dispatch({ type: 'inbox-status', status: 'loading' });
     try {
       const conversations = await service.conversations();
       if (request !== inboxRequest.current) return;
-      knownIds.current = new Set(conversations.map(({ _id }) => _id));
       dispatch({ type: 'inbox-loaded', conversations });
     } catch {
       if (request === inboxRequest.current) dispatch({ type: 'inbox-status', status: 'error' });
+    } finally {
+      if (request === inboxRequest.current) inboxRequest.current = undefined;
     }
   }, [service]);
 
-  const reloadThread = useCallback(async (id: string) => {
+  const reloadThread = useCallback(async (id: string, background = false) => {
     const requests = threadRequests.current;
-    const request = (requests.get(id) ?? 0) + 1;
+    const request = Symbol();
     requests.set(id, request);
-    dispatch({ type: 'thread-status', id, status: 'loading' });
+    if (!background) dispatch({ type: 'thread-status', id, status: 'loading' });
     try {
       const latest = latestSynced.current.get(id);
       let after: string | null = latest ?? null;
@@ -84,6 +87,8 @@ export function WorkspaceProvider({ children, user, demo, token }: {
       dispatch({ type: 'thread-loaded', id, messages, before });
     } catch {
       if (requests.get(id) === request) dispatch({ type: 'thread-status', id, status: 'error' });
+    } finally {
+      if (requests.get(id) === request) requests.delete(id);
     }
   }, [service]);
 
@@ -110,6 +115,24 @@ export function WorkspaceProvider({ children, user, demo, token }: {
   }, [reloadThread]);
 
   useEffect(() => {
+    const id = activeThread.current;
+    if (!id || AppState.currentState !== 'active') return;
+    const messageId = state.conversations.find((conversation) => conversation._id === id)?.unreadMessageId;
+    const messages = state.threads[id]?.messages;
+    const pending = pendingReads.current;
+    if (!messageId || !messages?.length || pending.has(messageId)) return;
+    const loaded = messages[0]._id > messageId || messages.some(({ _id }) => _id === messageId);
+    if (!loaded) return;
+    pending.add(messageId);
+    void service.markRead(id, messageId).then(() => {
+      dispatch({ type: 'conversation-read', id, messageId });
+      void reloadInbox(true);
+    }).catch(() => {
+      // The next inbox or thread refresh retries the read.
+    }).finally(() => pending.delete(messageId));
+  }, [state.conversations, state.threads, reloadInbox, service]);
+
+  useEffect(() => {
     void reloadInbox();
     if (demo || !token) return;
 
@@ -131,11 +154,15 @@ export function WorkspaceProvider({ children, user, demo, token }: {
       if (AppState.currentState !== 'background') retry = setTimeout(() => socket.connect(), 3000);
     };
     const stale = () => setReconnecting(true);
+    const sync = () => {
+      if (!inboxRequest.current) void reloadInbox(true);
+      const id = activeThread.current;
+      if (id && !threadRequests.current.has(id)) void reloadThread(id, true);
+    };
     const refresh = () => {
       clearTimeout(retry);
       setReconnecting(false);
-      void reloadInbox();
-      if (activeThread.current) void reloadThread(activeThread.current);
+      sync();
     };
 
     socket.on('ready', refresh);
@@ -149,14 +176,21 @@ export function WorkspaceProvider({ children, user, demo, token }: {
     });
     socket.on('newMessage', (message: Message) => {
       dispatch({ type: 'message', message });
-      if (!knownIds.current.has(message.conversationId)) void reloadInbox();
+      void reloadInbox(true);
     });
     if (AppState.currentState !== 'background') socket.connect();
 
+    // Messages sent through the serverless web API do not reach this socket server.
+    const poll = setInterval(() => {
+      if (AppState.currentState === 'active') sync();
+    }, refreshInterval);
     const subscription = AppState.addEventListener('change', (status) => {
       if (status === 'active') {
         if (socket.connected) refresh();
-        else socket.connect();
+        else {
+          sync();
+          socket.connect();
+        }
       } else if (status === 'background') {
         clearTimeout(retry);
         socket.disconnect();
@@ -164,6 +198,7 @@ export function WorkspaceProvider({ children, user, demo, token }: {
     });
     return () => {
       clearTimeout(retry);
+      clearInterval(poll);
       subscription.remove();
       socket.removeAllListeners();
       socket.disconnect();
@@ -172,7 +207,6 @@ export function WorkspaceProvider({ children, user, demo, token }: {
 
   async function start(person: string) {
     const conversation = await service.start(person);
-    knownIds.current.add(conversation._id);
     dispatch({ type: 'conversation-started', conversation });
     void reloadInbox();
     return conversation;
