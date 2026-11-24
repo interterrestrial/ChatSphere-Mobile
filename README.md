@@ -1,34 +1,34 @@
 # ChatSphere
 
-ChatSphere is a one-to-one messaging app. The web client uses Next.js and Redux Toolkit. The Express API uses MongoDB for accounts, conversations, and messages, Socket.IO for live delivery, and Gemini for reply suggestions and thread summaries.
+ChatSphere is a one-to-one messaging web app. Next.js serves the UI and runs the Express API in Vercel Node.js Functions. MongoDB stores accounts, sessions, conversations, and messages.
 
-## Web preview
+## Run the web app
 
-Use Node.js 22 and npm.
+Use Node.js 22.13 or later within the Node.js 22 release line. Install both packages from the repository root.
 
 ```sh
-cd frontend
-npm ci
-npm run dev
+npm ci --prefix backend
+npm ci --prefix frontend
+npm run dev --prefix frontend
 ```
 
-Open [the web app](http://localhost:3000) and select **Open demo inbox**. The sample inbox runs without an API or database. It uses synthetic conversations and resets on reload.
+Set the values from `frontend/.env.example` in `frontend/.env.local` before starting. Use a local or dedicated development MongoDB database for manual testing. Open [ChatSphere](http://localhost:3000).
 
-## Run against the Express API
+## Deploy the web app on Vercel
 
-1. Set `MONGO_URI`, `JWT_SECRET`, `CLIENT_URL=http://localhost:3000`, and `PORT=6001` in `backend/.env`. Set `GEMINI_API_KEY` for live reply suggestions and summaries.
-2. Copy `frontend/.env.example` to `frontend/.env.local`. Set `NEXT_PUBLIC_API_URL` if the API runs somewhere other than `http://localhost:6001`. To show Google sign-in, set `NEXT_PUBLIC_GOOGLE_CLIENT_ID` to a Google OAuth web client ID that allows your frontend origin.
-3. Build and start the API in a separate terminal.
+Set the project framework to Next.js and its root directory to `frontend`. Include files outside the project root so the Next.js build can trace the sibling Express package. Use Node.js 22. The install command in `frontend/vercel.json` installs both lockfiles from the repository. Deploy from the repository root when using Vercel CLI.
 
-   ```sh
-   cd backend
-   npm ci
-   npm run build
-   npm start
-   ```
+- Set `MONGO_URI` to the application database and `JWT_SECRET` to a generated secret with at least 32 bytes. Store both as sensitive production environment variables. The API initializes collections and indexes when it first connects.
+- Set `GOOGLE_CLIENT_IDS` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` to the web OAuth client ID. Add the exact production URL to **Authorized JavaScript origins** for that client in Google Cloud.
+- Optionally set `GEMINI_API_KEY` and `GEMINI_MODEL` together to enable assistance on request. Core messaging works with Gemini disabled.
+- Use `/api/health` to check database readiness. Verify Google sign-in and message delivery with two real accounts during release acceptance.
 
-Complete the planned authentication and chat authorization changes before hosting the API.
+Vercel web sessions use HTTP-only cookies. Open inboxes sync over authenticated HTTPS approximately every five seconds. Hidden tabs pause synchronization and resume when visible.
 
-## Web checks
+## Verification
 
-Run `npm run lint`, `npm run typecheck`, and `npm run build` from `frontend/`. See [DESIGN.md](DESIGN.md) for the web design shared with the planned Android client and [ARCHITECTURE.md](ARCHITECTURE.md) for the original backend diagrams.
+- **Backend** — Run `npm run build --prefix backend`. For the integration suite, point `TEST_MONGO_URI` to a disposable loopback MongoDB process before running `npm test --prefix backend`. The suite drops only the temporary database it creates.
+- **Web** — Run `npm run lint --prefix frontend`, `npm run build --prefix frontend`, and `npm run typecheck --prefix frontend`.
+- **Android** — Client source and checks remain in `mobile/`. Configure Android Google sign-in with the app’s package and signing fingerprint when preparing the native release.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the request and synchronization flow.

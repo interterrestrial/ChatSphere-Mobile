@@ -1,159 +1,23 @@
-# ChatSphere Architecture Definitions
+# ChatSphere architecture
 
-To support real-time chat, AI integration, and active caching, this document defines the relationships between all database entities and service modules within the system.
+Next.js and Express share one Vercel project. The Next.js Node.js API route authenticates the browser session and dispatches allowlisted requests to Express in the same function. It never forwards session tokens to browser JavaScript. MongoDB connection pools are reused within warm functions.
 
----
-## Entity-Relationship (ER) Diagram
+| Surface | Session | Message synchronization |
+| --- | --- | --- |
+| Vercel web | Secure HttpOnly cookie and revocable MongoDB session | Authenticated cursor polling with visibility-aware backoff |
+| Standalone API for the future native release | Bearer session | Socket.IO tickets and private rooms |
 
-The ER Diagram outlines how MongoDB collections interface with one another.
+The same-origin web API rejects cross-origin writes and marks session responses as uncacheable. Express verifies Google ID-token audiences and revokes server sessions on logout. Sign-in, registration, and Gemini limits share MongoDB counters. The API bounds each request body and message page.
 
-```mermaid
-erDiagram
-    USER ||--o{ MESSAGE : "sends"
-    USER ||--o{ CONVERSATION : "participates in"
-    CONVERSATION ||--o{ MESSAGE : "contains"
-    
-    USER {
-        ObjectId _id PK
-        string name
-        string email UK
-        string username UK
-        string googleId UK
-        string password "nullable"
-        boolean isUsernameSet
-        datetime createdAt
-        datetime updatedAt
-    }
-    
-    CONVERSATION {
-        ObjectId _id PK
-        string title
-        boolean isGroup
-        ObjectId[] participants FK
-        ObjectId lastMessage FK
-        datetime createdAt
-        datetime updatedAt
-    }
-    
-    MESSAGE {
-        ObjectId _id PK
-        ObjectId conversationId FK
-        ObjectId senderId FK
-        string content
-        boolean isRead
-        datetime createdAt
-    }
-```
+## Conversations and messages
 
----
+- Conversation membership gates history, sending, and both AI endpoints. Concurrent starts use a unique direct-conversation key.
+- Message writes use a client message ID scoped to the sender and conversation. The API reuses the saved message on retry, and clients merge by server message ID.
+- Message history returns up to 50 chronologically ordered messages. Backward cursors load earlier history. Forward cursors recover messages missed while the client was hidden or offline.
+- Gemini receives the selected incoming message or a bounded recent transcript when a participant requests help. Gemini configuration is optional.
 
-## UML Class Diagram
+## Deployment boundaries
 
-This diagram visualizes the backend structure connecting standard Mongoose schemas to dynamic, stateful layers like Redis caches and Socket networks.
+The Vercel health route is `/api/health`. It checks the database connection and index initialization. Vercel messaging uses HTTPS polling because Vercel Functions do not run the standalone Socket.IO server.
 
-```mermaid
-classDiagram
-    %% Core Models
-    class User {
-        +ObjectId _id
-        +String name
-        +String email
-        +String username
-        +String googleId
-        +String password
-        +Boolean isUsernameSet
-        +Date createdAt
-        +Date updatedAt
-        +save()
-        +findOne()
-    }
-
-    class Conversation {
-        +ObjectId _id
-        +String title
-        +Boolean isGroup
-        +ObjectId[] participants
-        +ObjectId lastMessage
-        +Date createdAt
-        +Date updatedAt
-        +addMessage()
-        +getParticipants()
-    }
-
-    class Message {
-        +ObjectId _id
-        +ObjectId conversationId
-        +ObjectId senderId
-        +String content
-        +Boolean isRead
-        +Date createdAt
-        +markAsRead()
-    }
-
-    %% Service Layers
-    class SocketManager {
-        +Server io
-        +Map activeUsers
-        +initialize(server)
-        +handleConnection(socket)
-        +sendMessage(data)
-        +emitTyping(data)
-    }
-
-    class RedisCache {
-        +RedisClient client
-        +set(key, value)
-        +get(key)
-        +delete(key)
-        +cacheActiveUser(userId, socketId)
-        +removeActiveUser(userId)
-    }
-
-    class GeminiService {
-        +generateSmartReply(messageContent)
-        +summarizeConversation(messages)
-    }
-
-    %% Dependencies and Relationships
-    User "1" -- "*" Conversation : participates
-    Conversation "1" *-- "*" Message : contains
-    SocketManager --> RedisCache : uses for presence
-    GeminiService --> Message : analyzes context
-    SocketManager --> Message : broadcasts
-```
-
----
-
-## Use Case Diagram
-
-The Use Case Diagram defines the primary actions that end-users can perform within the system and shows how external services like Gemini AI are integrated into these interactions.
-
-```mermaid
-flowchart LR
-    %% Actors
-    ActorUser((User))
-    ActorAI{{Gemini AI}}
-
-    %% System Boundary
-    subgraph ChatSphere [ChatSphere Platform]
-        direction TB
-        UC_Auth([User Registration & Login])
-        UC_Chat([Send & Receive Messages])
-        UC_Manage([Manage Conversations & Groups])
-        UC_Presence([Real-time Presence & Typing])
-        UC_Smart([Request Smart Replies])
-        UC_Summary([Generate Conversation Summary])
-    end
-
-    %% Actor to Use Case relationships
-    ActorUser --> UC_Auth
-    ActorUser --> UC_Manage
-    ActorUser --> UC_Presence
-    ActorUser --> UC_Chat
-    ActorUser --> UC_Smart
-    ActorUser --> UC_Summary
-
-    %% AI to Use Case relationships
-    UC_Smart -.->|API Call| ActorAI
-    UC_Summary -.->|API Call| ActorAI
-```
+The native release and Firebase delivery remain separate work. The standalone API can still run with `npm start --prefix backend` for that phase.
