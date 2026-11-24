@@ -1,0 +1,168 @@
+import { after, before, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import http from 'node:http';
+import mongoose from 'mongoose';
+import { io as client, type Socket } from 'socket.io-client';
+import { createApp } from '../app';
+import { connectDB } from '../db/db';
+import { initializeSocket } from '../utils/socket';
+import Message from '../models/message.model';
+
+type Json = {
+    token: string; user: { _id: string; username: string }; _id: string;
+    messages: { _id: string; content: string }[]; nextCursor: string | null;
+};
+
+const webOrigin = 'https://chatsphere.example.test';
+let base: string;
+let sockets: ReturnType<typeof initializeSocket>;
+const subscribers = new Set<Socket>();
+
+before(async () => {
+    const uri = process.env.TEST_MONGO_URI;
+    if (!uri || !/^mongodb:\/\/127\.0\.0\.1:\d+\/?$/.test(uri)) {
+        throw new Error('TEST_MONGO_URI must be a localhost MongoDB URI without a database name');
+    }
+    process.env.JWT_SECRET = randomUUID() + randomUUID();
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_CLIENT_IDS;
+    await connectDB(`${uri.replace(/\/$/, '')}/chatsphere_test_${randomUUID().replace(/-/g, '')}`);
+    const server = http.createServer(createApp({ port: 6001, trustProxy: 0, webOrigins: [webOrigin], googleClientIds: [] }));
+    sockets = initializeSocket(server, [webOrigin]);
+    await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    assert(address && typeof address !== 'string');
+    base = `http://127.0.0.1:${address.port}`;
+});
+
+after(async () => {
+    subscribers.forEach(socket => socket.disconnect());
+    await sockets?.close();
+    if (mongoose.connection.readyState === 1) await mongoose.connection.dropDatabase();
+    await mongoose.disconnect();
+});
+
+async function request(path: string, token?: string, body?: object) {
+    const response = await fetch(base + path, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: {
+            ...(token && { Authorization: `Bearer ${token}` }),
+            ...(body && { 'Content-Type': 'application/json' }),
+            Origin: webOrigin,
+        },
+        body: body && JSON.stringify(body),
+    });
+    return { status: response.status, headers: response.headers, json: await response.json().catch(() => null) as Json };
+}
+
+async function register(username: string) {
+    const response = await request('/api/auth/register', undefined, {
+        name: username, email: `${username}@example.test`, password: 'long-test-password', username,
+    });
+    assert.equal(response.status, 201);
+    return response.json;
+}
+
+function event<T>(socket: Socket, name: string) {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${name}`)), 2500);
+        socket.once(name, (value: T) => {
+            clearTimeout(timer);
+            resolve(value);
+        });
+    });
+}
+
+async function openSocket(token: string) {
+    const socket = client(base, { auth: { token }, autoConnect: false, reconnection: false });
+    subscribers.add(socket);
+    const ready = event(socket, 'ready');
+    socket.connect();
+    await ready;
+    return socket;
+}
+
+test('validates credentials, keeps profile data private, and limits access to the correct token scope', async () => {
+    const health = await request('/health/ready');
+    assert.equal(health.status, 200);
+    assert.equal(health.headers.get('access-control-allow-origin'), webOrigin);
+    assert.equal((await request('/api/auth/register', undefined, { email: {}, password: 'short' })).status, 400);
+    const user = await register('first_user');
+    assert.equal((await request('/api/auth/login', undefined, { identifier: 'first_user', password: 'bad-password' })).status, 401);
+    const login = await request('/api/auth/login', undefined, { identifier: 'FIRST_USER', password: 'long-test-password' });
+    assert.equal(login.status, 200);
+    assert.equal(login.json.user._id, user.user._id);
+    assert(!('password' in login.json.user));
+    assert.equal(login.headers.get('cache-control'), 'no-store');
+
+    assert.equal((await request('/api/auth/choose-username', user.token, { username: 'revised_name' })).status, 200);
+    assert.equal((await request('/api/auth/session', user.token)).json.user.username, 'revised_name');
+    const ticket = await request('/api/auth/socket-ticket', user.token);
+    assert.equal(ticket.status, 200);
+    assert.equal((await request('/api/auth/session', ticket.json.token)).status, 401);
+
+    const invalidSocket = client(base, { auth: { token: user.token }, autoConnect: false, reconnection: false });
+    subscribers.add(invalidSocket);
+    const denied = event<Error>(invalidSocket, 'connect_error');
+    invalidSocket.connect();
+    assert.equal((await denied).message, 'Authentication required');
+});
+
+test('restricts history and AI to members, deduplicates writes, pages history, and revokes live sessions', async () => {
+    const alice = await register('alice');
+    const bob = await register('bob');
+    const outsider = await register('outside');
+    const [first, second] = await Promise.all([
+        request('/api/chat/conversations', alice.token, { participantId: bob.user._id }),
+        request('/api/chat/conversations', bob.token, { participantId: alice.user._id }),
+    ]);
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    const conversationId = first.json._id;
+    assert.equal(second.json._id, conversationId);
+    const messagesPath = `/api/chat/messages/${conversationId}`;
+
+    assert.equal((await request(messagesPath, outsider.token)).status, 404);
+    assert.equal((await request(`/api/chat/summary/${conversationId}`, outsider.token)).status, 404);
+    assert.equal((await request('/api/chat/messages', outsider.token, { conversationId, content: 'private', clientMessageId: randomUUID() })).status, 404);
+    assert.equal((await request('/api/chat/users/search?q=%2E%2A', alice.token)).status, 200);
+
+    const bobTicket = (await request('/api/auth/socket-ticket', bob.token)).json.token;
+    const bobSocket = await openSocket(bobTicket);
+    const outsiderSocket = await openSocket((await request('/api/auth/socket-ticket', outsider.token)).json.token);
+    let unrelatedDeliveries = 0;
+    outsiderSocket.on('newMessage', () => { unrelatedDeliveries++; });
+    const delivers = event<{ _id: string }>(bobSocket, 'newMessage');
+    const body = { conversationId, clientMessageId: randomUUID(), content: 'Hello from Alice' };
+    const results = await Promise.all([request('/api/chat/messages', alice.token, body), request('/api/chat/messages', alice.token, body)]);
+    assert.deepEqual(results.map(result => result.status).sort(), [200, 201]);
+    assert.equal(results[0].json._id, results[1].json._id);
+    assert.equal((await delivers)._id, results[0].json._id);
+    assert.equal(unrelatedDeliveries, 0);
+    assert.equal((await request('/api/chat/messages', alice.token, { ...body, content: 'changed' })).status, 409);
+    assert.equal(await Message.countDocuments({ conversationId }), 1);
+
+    const reply = { conversationId, messageId: results[0].json._id };
+    assert.equal((await request('/api/chat/smart-replies', outsider.token, reply)).status, 404);
+    assert.equal((await request('/api/chat/smart-replies', bob.token, reply)).status, 503);
+
+    await Message.insertMany(Array.from({ length: 53 }, (_, i) =>
+        ({ conversationId, content: `Sample ${i}`, senderId: alice.user._id })));
+    const newest = await request(messagesPath, bob.token);
+    assert.equal(newest.json.messages.length, 50);
+    const older = await request(`${messagesPath}?before=${newest.json.nextCursor}`, bob.token);
+    assert.equal(older.json.messages.length, 4);
+    assert.equal(older.json.nextCursor, null);
+    const later = await request(`${messagesPath}?after=${older.json.messages.at(-1)!._id}`, bob.token);
+    assert.deepEqual(later.json.messages, newest.json.messages);
+
+    const disconnected = event(bobSocket, 'disconnect');
+    assert.equal((await request('/api/auth/logout', bob.token, {})).status, 204);
+    await disconnected;
+    assert.equal((await request(messagesPath, bob.token)).status, 401);
+    assert.equal((await request(messagesPath, alice.token)).status, 200);
+});

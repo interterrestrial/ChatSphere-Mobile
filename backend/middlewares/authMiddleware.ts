@@ -1,36 +1,20 @@
-import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
+import type { Request, Response, NextFunction } from 'express';
+import { HttpError } from '../http';
+import { resolveIdentity, type Identity } from '../utils/authUtils';
 
 export interface AuthRequest extends Request {
-    user?: {
-        userId: string;
-        username?: string;
-    }
+    identity?: Identity;
 }
 
-export const requireAuth = (req: Request, res: Response, next: NextFunction): void => {
-    const JWT_SECRET = process.env.JWT_SECRET;
-    if (!JWT_SECRET) {
-        res.status(500).json({ message: "Server configuration error" });
-        return;
-    }
+export function identity(req: AuthRequest) {
+    if (!req.identity) throw new HttpError(401, 'Sign in to continue');
+    return req.identity;
+}
 
-    const authReq = req as AuthRequest;
-    const authHeader = authReq.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        res.status(401).json({ message: "Authentication required. Please log in." });
-        return;
-    }
-
-    const token = authHeader.split(" ")[1];
-
-    try {
-        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string, username?: string };
-        authReq.user = decoded;
-        next();
-    } catch (error) {
-        res.status(401).json({ message: "Invalid or expired token. Please log in again." });
-        return;
-    }
-};
+export async function requireAuth(req: AuthRequest, _res: Response, next: NextFunction) {
+    const bearer = /^Bearer (\S+)$/i.exec(req.headers.authorization || '')?.[1];
+    const verified = await resolveIdentity(bearer, 'session');
+    if (!verified) throw new HttpError(401, 'Sign in to continue');
+    req.identity = verified;
+    next();
+}

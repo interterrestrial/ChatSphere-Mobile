@@ -15,11 +15,18 @@ const MessageSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    clientMessageId: { type: String, select: false },
     isRead: {
         type: Boolean,
         default: false
     }
 }, { timestamps: true });
+
+MessageSchema.index({ conversationId: 1, _id: -1 });
+MessageSchema.index({ conversationId: 1, senderId: 1, clientMessageId: 1 }, {
+    unique: true,
+    partialFilterExpression: { clientMessageId: { $type: "string" } },
+});
 
 const Message = mongoose.model("Message", MessageSchema);
 

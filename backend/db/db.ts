@@ -1,25 +1,12 @@
-import mongoose from "mongoose";
+import mongoose from 'mongoose';
+import User from '../models/user.model';
+import Conversation from '../models/conversation.model';
+import Message from '../models/message.model';
+import Session from '../models/session.model';
+import RateLimit from '../models/rateLimit.model';
 
-const connectDB = async () => {
-    const uri = process.env.MONGO_URI?.replace(/^["']|["']$/g, '').trim();
-    if (!uri) {
-        throw new Error("MONGO_URI environment variable is required");
-    }
-
-    // Disable buffering so we see errors immediately instead of timing out
+export async function connectDB(uri: string, maxPoolSize = 10) {
     mongoose.set('bufferCommands', false);
-
-    console.log("Connecting to MongoDB...");
-    try {
-        await mongoose.connect(uri, { 
-            family: 4,
-            serverSelectionTimeoutMS: 20000 
-        });
-        console.log("MongoDB connected successfully!");
-    } catch (err: any) {
-        console.error("CRITICAL DB CONNECTION ERROR:", err.message);
-        throw err;
-    }
+    await mongoose.connect(uri, { serverSelectionTimeoutMS: 10_000, maxPoolSize, minPoolSize: 0, maxIdleTimeMS: 60_000 });
+    await Promise.all([User.init(), Conversation.init(), Message.init(), Session.init(), RateLimit.init()]);
 }
-
-export default connectDB;

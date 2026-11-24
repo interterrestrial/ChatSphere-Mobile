@@ -1,25 +1,62 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import Session from '../models/session.model';
+import { jwtSecret } from '../config';
 
-const saltRounds = 10;
-const JWT_EXPIRES_IN = "7d"; // 7 days
+const issuer = 'chatsphere';
+const sessionLifetime = 7 * 24 * 60 * 60;
+export const socketTicketLifetime = 60;
+type Scope = 'session' | 'socket';
 
-const getJwtSecret = (): string => {
-    const secret = process.env.JWT_SECRET;
-    if (!secret) throw new Error("JWT_SECRET environment variable is required");
-    return secret;
-};
+export interface Identity {
+    userId: string;
+    sessionId: string;
+    expiresAt: Date;
+}
 
-export const hashPassword = async (password: string): Promise<string> => {
-    return await bcrypt.hash(password, saltRounds);
-};
+export const hashPassword = (password: string) => bcrypt.hash(password, 12);
+export const comparePasswords = (password: string, hash: string) => bcrypt.compare(password, hash);
 
-export const comparePasswords = async (password: string, hash: string): Promise<boolean> => {
-    return await bcrypt.compare(password, hash);
-};
-
-export const generateToken = (userId: string, username?: string | null): string => {
-    return jwt.sign({ userId, username }, getJwtSecret(), {
-        expiresIn: JWT_EXPIRES_IN,
+function signToken(userId: string, sessionId: string, scope: Scope, expiresIn: number) {
+    return jwt.sign({ sid: sessionId }, jwtSecret(), {
+        algorithm: 'HS256',
+        issuer,
+        audience: scope,
+        subject: userId,
+        expiresIn,
     });
-};
+}
+
+export async function createSession(userId: string) {
+    const record = await Session.create({ userId, expiresAt: new Date(Date.now() + sessionLifetime * 1000) });
+    return signToken(userId, record.id, 'session', sessionLifetime);
+}
+
+export function createSocketTicket(identity: Identity) {
+    return signToken(identity.userId, identity.sessionId, 'socket', socketTicketLifetime);
+}
+
+export async function resolveIdentity(token: unknown, scope: Scope): Promise<Identity | null> {
+    if (typeof token !== 'string' || token.length > 4096) return null;
+    const secret = jwtSecret();
+    let claims: string | jwt.JwtPayload;
+
+    try {
+        claims = jwt.verify(token, secret, { algorithms: ['HS256'], issuer, audience: scope });
+    } catch {
+        return null;
+    }
+
+    if (typeof claims !== 'object' || typeof claims.sub !== 'string' || typeof claims.sid !== 'string' ||
+        !/^[a-f0-9]{24}$/.test(claims.sub) || !/^[a-f0-9]{24}$/.test(claims.sid) || typeof claims.exp !== 'number') {
+        return null;
+    }
+
+    const session = await Session.findOne({
+        _id: claims.sid,
+        userId: claims.sub,
+        expiresAt: { $gt: new Date() },
+    }).select('expiresAt').lean();
+
+    return session ? { userId: claims.sub, sessionId: claims.sid, expiresAt: session.expiresAt } : null;
+}

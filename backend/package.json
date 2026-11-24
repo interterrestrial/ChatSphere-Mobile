@@ -2,40 +2,40 @@
   "name": "backend",
   "version": "1.0.0",
   "description": "ChatSphere Backend API",
-  "main": "server.ts",
+  "main": "dist/server.js",
   "scripts": {
-    "dev": "nodemon --exec ts-node server.ts",
+    "dev": "tsx watch server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "npm run build && node --test dist/tests/*.test.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@google/genai": "^1.50.1",
-    "@google/generative-ai": "^0.24.1",
-    "axios": "^1.15.0",
     "bcrypt": "^6.0.0",
-    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.5",
+    "google-auth-library": "^11.3.4",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.3.0",
-    "morgan": "^1.10.1",
-    "redis": "^5.12.1",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
-    "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/morgan": "^1.9.10",
-    "@types/node": "^25.5.0",
-    "ts-node": "^10.9.2",
-    "ts-node-dev": "^2.0.0",
+    "@types/node": "^22.20.5",
+    "socket.io-client": "^4.8.4",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.13 <23"
   }
 }

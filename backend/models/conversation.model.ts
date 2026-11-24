@@ -14,12 +14,16 @@ const ConversationSchema = new mongoose.Schema({
         ref: "User",
         required: true
     }],
+    directKey: { type: String, select: false },
     lastMessage: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Message",
         default: null
     }
 }, { timestamps: true });
+
+ConversationSchema.index({ directKey: 1 }, { unique: true, sparse: true });
+ConversationSchema.index({ participants: 1, updatedAt: -1 });
 
 const Conversation = mongoose.model("Conversation", ConversationSchema);
 
